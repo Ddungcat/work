@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>매출 분석 대시보드 (필터 적용)</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PapaParse for CSV -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <!-- Chart.js for Visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: #f3f4f6; /* bg-gray-100 */
+        }
+        .canvas-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+        /* 스크롤바 커스텀 (선택사항) */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <div class="container mx-auto px-4 py-8 max-w-7xl">
+        <header class="mb-6 flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-900">📊 매출 분석 대시보드</h1>
+                <p class="text-sm text-gray-500 mt-1">데이터를 업로드하고 원하는 조건으로 필터링하여 분석해보세요.</p>
+            </div>
+            <div class="mt-4 md:mt-0 flex flex-col sm:flex-row gap-3 items-center">
+                <button onclick="downloadSample()" class="text-sm px-4 py-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition shadow-sm font-medium">
+                    샘플 CSV 다운로드
+                </button>
+                <label for="csvFileInput" class="cursor-pointer bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700 transition shadow-sm font-medium text-center">
+                    CSV 파일 업로드
+                    <input type="file" id="csvFileInput" accept=".csv" class="hidden">
+                </label>
+            </div>
+        </header>
+
+        <!-- 데이터가 없을 때 표시되는 안내 메시지 -->
+        <div id="emptyState" class="bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-100">
+            <svg class="mx-auto h-16 w-16 text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <h2 class="text-xl font-semibold text-gray-700">업로드된 데이터가 없습니다</h2>
+            <p class="text-gray-500 mt-2">우측 상단의 버튼을 눌러 매출 데이터(CSV)를 업로드해주세요.<br>필수 컬럼: 일자, 점포, 카테고리, 판매수량, 매출액</p>
+        </div>
+
+        <div id="dashboardContent" class="hidden flex-col gap-6">
+            
+            <!-- 필터 영역 (Filters) -->
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col lg:flex-row gap-4 items-end">
+                <div class="flex-1 w-full flex flex-col sm:flex-row gap-4">
+                    <div class="w-full sm:w-1/2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">시작일</label>
+                        <input type="date" id="startDate" class="w-full border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border">
+                    </div>
+                    <div class="w-full sm:w-1/2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">종료일</label>
+                        <input type="date" id="endDate" class="w-full border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border">
+                    </div>
+                </div>
+                <div class="flex-1 w-full">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">점포 필터</label>
+                    <select id="storeSelect" class="w-full border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border">
+                        <option value="all">전체 점포</option>
+                        <!-- 동적으로 추가됨 -->
+                    </select>
+                </div>
+                <div class="w-full lg:w-auto">
+                    <button id="resetFilterBtn" class="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition font-medium">초기화</button>
+                </div>
+            </div>
+
+            <!-- 요약 카드 (Summary Cards) -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- 총 매출액 -->
+                <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center gap-4">
+                    <div class="p-4 bg-blue-50 text-blue-600 rounded-xl">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">필터링된 총 매출액</p>
+                        <h3 class="text-2xl font-bold text-gray-900" id="totalSalesText">0 원</h3>
+                    </div>
+                </div>
+                
+                <!-- 총 판매수량 -->
+                <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center gap-4">
+                    <div class="p-4 bg-green-50 text-green-600 rounded-xl">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">필터링된 총 판매수량</p>
+                        <h3 class="text-2xl font-bold text-gray-900" id="totalQtyText">0 개</h3>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 차트 영역 -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- 날짜별 매출 추이 (Line Chart) -->
+                <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 lg:col-span-3">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4">📈 날짜별 매출 추이</h3>
+                    <div class="canvas-container">
+                        <canvas id="dateLineChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 점포별 매출액 (Bar Chart) -->
+                <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 lg:col-span-2">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4">🏪 점포별 매출액</h3>
+                    <div class="canvas-container">
+                        <canvas id="storeBarChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 카테고리별 매출 비중 (Doughnut Chart) -->
+                <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4">🛒 카테고리별 매출 비중</h3>
+                    <div class="canvas-container">
+                        <canvas id="categoryDoughnutChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 전역 상태 관리
+        let rawData = []; // 원본 데이터 보관용
+        let charts = { date: null, store: null, category: null }; // 차트 인스턴스
+
+        // 공통 차트 설정
+        Chart.defaults.font.family = "'Pretendard', sans-serif";
+        Chart.defaults.color = '#6b7280'; // text-gray-500
+
+        // DOM 요소 캐싱
+        const fileInput = document.getElementById('csvFileInput');
+        const startDateInput = document.getElementById('startDate');
+        const endDateInput = document.getElementById('endDate');
+        const storeSelect = document.getElementById('storeSelect');
+        const resetFilterBtn = document.getElementById('resetFilterBtn');
+
+        // 파일 업로드 이벤트
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // PapaParse를 이용한 CSV 파싱
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    processInitialData(results.data);
+                },
+                error: function(error) {
+                    alert('CSV 파일을 읽는 중 오류가 발생했습니다.');
+                    console.error(error);
+                }
+            });
+        });
+
+        // 필터 변경 이벤트 리스너 등록
+        startDateInput.addEventListener('change', applyFilters);
+        endDateInput.addEventListener('change', applyFilters);
+        storeSelect.addEventListener('change', applyFilters);
+        
+        resetFilterBtn.addEventListener('click', () => {
+            initFilterUI();
+            applyFilters();
+        });
+
+        function processInitialData(data) {
+            if (data.length === 0) {
+                alert('데이터가 비어있습니다.');
+                return;
+            }
+
+            // 필수 컬럼 존재 여부 체크
+            const firstRow = data[0];
+            const requiredColumns = ['일자', '점포', '카테고리', '판매수량', '매출액'];
+            const missingColumns = requiredColumns.filter(col => !(col in firstRow));
+            
+            if (missingColumns.length > 0) {
+                alert(`잘못된 파일 형식입니다. 다음 컬럼이 누락되었습니다: ${missingColumns.join(', ')}`);
+                return;
+            }
+
+            rawData = data; // 원본 데이터 저장
+
+            // 빈 화면 숨기고 대시보드 표시
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('dashboardContent').classList.remove('hidden');
+            document.getElementById('dashboardContent').classList.add('flex');
+
+            initFilterUI();
+            applyFilters(); // 최초 렌더링
+        }
+
+        function initFilterUI() {
+            // 날짜 추출 및 기본값(최소/최대) 설정
+            const dates = rawData.map(r => r['일자']).filter(d => d);
+            if (dates.length > 0) {
+                const sortedDates = [...new Set(dates)].sort();
+                startDateInput.value = sortedDates[0];
+                endDateInput.value = sortedDates[sortedDates.length - 1];
+            } else {
+                startDateInput.value = '';
+                endDateInput.value = '';
+            }
+
+            // 점포 목록 추출 및 Select Option 채우기
+            const stores = [...new Set(rawData.map(r => r['점포']).filter(s => s))].sort();
+            storeSelect.innerHTML = '<option value="all">전체 점포</option>'; // 초기화
+            stores.forEach(store => {
+                const option = document.createElement('option');
+                option.value = store;
+                option.textContent = store;
+                storeSelect.appendChild(option);
+            });
+            storeSelect.value = 'all';
+        }
+
+        function applyFilters() {
+            const startDate = startDateInput.value;
+            const endDate = endDateInput.value;
+            const selectedStore = storeSelect.value;
+
+            // 데이터 필터링 수행
+            const filteredData = rawData.filter(row => {
+                const date = row['일자'];
+                const store = row['점포'];
+                if (!date) return false;
+
+                let isValid = true;
+                if (startDate && date < startDate) isValid = false;
+                if (endDate && date > endDate) isValid = false;
+                if (selectedStore !== 'all' && store !== selectedStore) isValid = false;
+
+                return isValid;
+            });
+
+            updateDashboard(filteredData);
+        }
+
+        function updateDashboard(data) {
+            let totalSales = 0;
+            let totalQty = 0;
+            let salesByDate = {};
+            let salesByStore = {};
+            let salesByCategory = {};
+
+            data.forEach(row => {
+                const date = row['일자'];
+                const store = row['점포'];
+                const category = row['카테고리'];
+                
+                // 콤마 제거 후 숫자로 변환
+                const qty = parseInt(String(row['판매수량'] || '0').replace(/,/g, ''), 10) || 0;
+                const sales = parseInt(String(row['매출액'] || '0').replace(/,/g, ''), 10) || 0;
+
+                totalSales += sales;
+                totalQty += qty;
+
+                if(date) salesByDate[date] = (salesByDate[date] || 0) + sales;
+                if(store) salesByStore[store] = (salesByStore[store] || 0) + sales;
+                if(category) salesByCategory[category] = (salesByCategory[category] || 0) + sales;
+            });
+
+            // KPI 업데이트
+            document.getElementById('totalSalesText').innerText = totalSales.toLocaleString() + ' 원';
+            document.getElementById('totalQtyText').innerText = totalQty.toLocaleString() + ' 개';
+
+            drawCharts(salesByDate, salesByStore, salesByCategory);
+        }
+
+        function drawCharts(salesByDate, salesByStore, salesByCategory) {
+            const dateKeys = Object.keys(salesByDate).sort();
+            const dateValues = dateKeys.map(k => salesByDate[k]);
+
+            const storeKeys = Object.keys(salesByStore).sort((a, b) => salesByStore[b] - salesByStore[a]); 
+            const storeValues = storeKeys.map(k => salesByStore[k]);
+
+            const categoryKeys = Object.keys(salesByCategory).sort((a, b) => salesByCategory[b] - salesByCategory[a]); 
+            const categoryValues = categoryKeys.map(k => salesByCategory[k]);
+
+            // 차트 재생성 전 기존 인스턴스 파괴
+            if (charts.date) charts.date.destroy();
+            if (charts.store) charts.store.destroy();
+            if (charts.category) charts.category.destroy();
+
+            // 1. 날짜별 매출 추이
+            charts.date = new Chart(document.getElementById('dateLineChart'), {
+                type: 'line',
+                data: {
+                    labels: dateKeys,
+                    datasets: [{
+                        label: '매출액',
+                        data: dateValues,
+                        borderColor: '#4f46e5',
+                        backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                        borderWidth: 2,
+                        pointBackgroundColor: '#ffffff',
+                        pointBorderColor: '#4f46e5',
+                        pointRadius: 4,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: (ctx) => ctx.parsed.y.toLocaleString() + ' 원' } }
+                    },
+                    scales: { y: { beginAtZero: true, ticks: { callback: (val) => val.toLocaleString() } } }
+                }
+            });
+
+            // 2. 점포별 매출액
+            charts.store = new Chart(document.getElementById('storeBarChart'), {
+                type: 'bar',
+                data: {
+                    labels: storeKeys,
+                    datasets: [{
+                        label: '매출액',
+                        data: storeValues,
+                        backgroundColor: '#3b82f6',
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: (ctx) => ctx.parsed.y.toLocaleString() + ' 원' } }
+                    },
+                    scales: { y: { beginAtZero: true, ticks: { callback: (val) => val.toLocaleString() } } }
+                }
+            });
+
+            // 3. 카테고리별 매출 비중
+            charts.category = new Chart(document.getElementById('categoryDoughnutChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: categoryKeys,
+                    datasets: [{
+                        data: categoryValues,
+                        backgroundColor: ['#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#64748b'],
+                        borderWidth: 0,
+                        hoverOffset: 4
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'right', labels: { boxWidth: 12, usePointStyle: true } },
+                        tooltip: {
+                            callbacks: {
+                                label: (ctx) => {
+                                    let total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                    let percentage = total ? ((ctx.parsed / total) * 100).toFixed(1) : 0;
+                                    return ` ${ctx.label}: ${ctx.parsed.toLocaleString()}원 (${percentage}%)`;
+                                }
+                            }
+                        }
+                    },
+                    cutout: '65%'
+                }
+            });
+        }
+
+        function downloadSample() {
+            const csvContent = 
+`일자,점포,카테고리,상품코드,상품명,판매수량,정상단가,할인액,매출액,행사적용
+2026-08-01,센트럴점,냉장 간편식,RM-101,한끼 소불고기,44,5900,0,259600,N
+2026-08-01,센트럴점,냉장 간편식,RM-102,매콤 닭갈비,49,5500,0,269500,N
+2026-08-01,센트럴점,음료,BV-202,콜라제로,30,1200,0,36000,N
+2026-08-01,강남점,음료,BV-201,아메리카노,120,2000,0,240000,N
+2026-08-02,센트럴점,냉장 간편식,RM-101,한끼 소불고기,30,5900,0,177000,N
+2026-08-02,강남점,스낵,SN-301,감자칩,80,1500,0,120000,Y
+2026-08-03,홍대점,스낵,SN-302,나쵸,50,2000,0,100000,N
+2026-08-03,센트럴점,음료,BV-201,아메리카노,40,2000,0,80000,N`;
+
+            const blob = new Blob(["\uFEFF"+csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = "sample_sales_data.csv";
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+</body>
+</html>
